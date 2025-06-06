@@ -10,7 +10,7 @@
 #' Formally, it is defined as \deqn{\phi(x)_n = \max \{ y_i, i:x_i \leq x \} }
 #' The function returns the indices of all data points on the FDH (where \eqn{y_i = \phi(x_i)}).
 #' By linearly connecting these points one arrives at the linearized FDH curve.
-#' @export
+#' @noRd
 #'
 #' @examples
 #' xtab=atp_2017$ranking_points
@@ -49,7 +49,7 @@ fdh_index <- function(xtab, ytab) {
 #' Formally, it is defined as \deqn{\phi(x)_n = \min \{ y_i, i:x_i \geq x \} }
 #' The function returns the indices of all data points on the FDH (where \eqn{y_i = \phi(x_i)}).
 #' By linearly connecting these points one arrives at the linearized FDH curve.
-#' @export
+#' @noRd
 #'
 #' @examples
 #' xtab=atp_2017$ranking_points
@@ -89,7 +89,7 @@ fdh_lower_index <- function(xtab, ytab) {
 #' This implementation follows the standard VRS approach as introduced by Banker, Charnes, and Cooper (1984).
 #' The function returns the indices of all data points that lie on this frontier.
 #' By linearly connecting these points, one obtains the VRS DEA frontier.
-#' @export
+#' @noRd
 #'
 #' @examples
 #' xtab=atp_2017$ranking_points
@@ -99,6 +99,12 @@ fdh_lower_index <- function(xtab, ytab) {
 #'         ytab[dea_index(xtab,ytab)],
 #'           type = "l", col = "red", lty = 2)
 dea_index <- function(xtab, ytab) {
+
+  unique_points <- aggregate(ytab ~ xtab, FUN = max)
+  xtab <- unique_points$xtab
+  ytab <- unique_points$ytab
+    # if xtab duplicates, only us the one with the highest ytab
+
   fidx <- fdh_index(xtab, ytab)
 
   xfdh <- xtab[fidx]
@@ -140,7 +146,7 @@ dea_index <- function(xtab, ytab) {
 #' This implementation follows the standard VRS approach as introduced by Banker, Charnes, and Cooper (1984).
 #' The function returns the indices of all data points that lie on this frontier.
 #' By linearly connecting these points, one obtains the lower VRS DEA frontier.
-#' @export
+#' @noRd
 #'
 #' @examples
 #' xtab=atp_2017$ranking_points
