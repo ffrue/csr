@@ -10,7 +10,7 @@
 #' Formally, it is defined as \deqn{\phi(x)_n = \max \{ y_i, i:x_i \leq x \} }
 #' The function returns the indices of all data points on the FDH (where \eqn{y_i = \phi(x_i)}).
 #' By linearly connecting these points one arrives at the linearized FDH curve.
-#' @noRd
+#' @export
 #'
 #' @examples
 #' xtab=atp_2017$ranking_points
@@ -89,7 +89,7 @@ fdh_lower_index <- function(xtab, ytab) {
 #' This implementation follows the standard VRS approach as introduced by Banker, Charnes, and Cooper (1984).
 #' The function returns the indices of all data points that lie on this frontier.
 #' By linearly connecting these points, one obtains the VRS DEA frontier.
-#' @noRd
+#' @export
 #'
 #' @examples
 #' xtab=atp_2017$ranking_points
@@ -99,42 +99,38 @@ fdh_lower_index <- function(xtab, ytab) {
 #'         ytab[dea_index(xtab,ytab)],
 #'           type = "l", col = "red", lty = 2)
 dea_index <- function(xtab, ytab) {
-
-  unique_points <- aggregate(ytab ~ xtab, FUN = max)
-  xtab <- unique_points$xtab
-  ytab <- unique_points$ytab
-    # if xtab duplicates, only us the one with the highest ytab
-
+  # Step 1: Get FDH frontier points
   fidx <- fdh_index(xtab, ytab)
-
   xfdh <- xtab[fidx]
   yfdh <- ytab[fidx]
 
+  # Step 2: Sort FDH frontier by x
   ridx <- order(xfdh)
   xsfdh <- xfdh[ridx]
   ysfdh <- yfdh[ridx]
 
-  didx <- c(1)
-  xcur <- xsfdh
-  ycur <- ysfdh
+  # Step 3: Initialize
+  didx <- c(1)  # indices into sorted FDH frontier
+  pos <- 1
 
-  while (length(xcur) >= 2) {
-    tlength <- length(xcur)
-    slopes <- (ycur[2:tlength] - ycur[1]) / (xcur[2:tlength] - xcur[1])
+  # Step 4: Iteratively find DEA points based on max slope
+  while (pos < length(xsfdh)) {
+    xcur <- xsfdh[pos:length(xsfdh)]
+    ycur <- ysfdh[pos:length(ysfdh)]
+    if (length(xcur) < 2) break
+
+    slopes <- (ycur[2:length(ycur)] - ycur[1]) / (xcur[2:length(xcur)] - xcur[1])
     b <- which.max(slopes)
 
-    didx <- c(didx, didx[length(didx)] + b)
-
-    xcur <- xcur[(b + 1):tlength]
-    ycur <- ycur[(b + 1):tlength]
+    pos <- pos + b
+    didx <- c(didx, pos)
   }
 
-  didx <- fidx[ridx[didx]]
-  didx <- sort(didx)
-
-  return(didx)
+  # Step 5: Map back to original indices
+  final_idx <- fidx[ridx[didx]]
+  final_idx <- sort(final_idx)
+  return(final_idx)
 }
-
 #' Find DEA Lower Frontier Points
 #'
 #' finds the x-indices of points on the lower DEA-frontier (with varying returns to scale)
@@ -196,10 +192,13 @@ dea_lower_index <- function(xtab, ytab) {
 #' @param xtab numeric vector of x-indices of data points
 #' @param ytab numeric vector of y-indices of data points
 #' @param xgrid numeric vector of x-values where function should be evaluated
-#' @param kn integer. number of knots for spline fitting
+#' @param kn integer. number of knots for spline fitting, if 0 all FDH/DEA points are used
 #' @param cv integer. indicates constraints for fitting: -1 (unconstrained), 0 (monotonically increasing), 1 (monotonically increasing + concave)
+#' @param endpoints boolean. TRUE forces frontier to go through first and last DEA/FDH point
+#' @param normalize integer 1 divides by absolute maximum to normalize xtab and ytab, 2 takes the square root; default is no normalization
 #' @param iters integer. iterations used for optimization for the CVXR solver
 #' @param eps integer. stopping criterion (absolute some of deviations from constraints)
+#' @param return_knots boolean. TRUE makes the output a list of the fitted frontier and the chosen knots
 #' @return numeric vector with y-values of fitted cubic spline at grid points
 #' @details The upper boundary curve fitted by this function is a cubic spline with selected number of knots \eqn{t_j} (location chosen at quantiles of $x$)
 #' and the solution to the optimization problem \deqn{\min_\alpha \int \pi(x)^T \alpha dx = \sum_{j=0}^{N-1} \alpha_j \int \pi_j(x) dx}
@@ -209,36 +208,51 @@ dea_lower_index <- function(xtab, ytab) {
 #' If cv = 1, the concavity constraint \eqn{\pi''(t_j)^T \alpha \leq 0 \quad \forall j = 0,1,...,k_n} is also imposed.
 #' The implementation of the cubic spline fitting follows the approach outlined in Daouia, Noh and Park 2016 and uses the
 #' framework from the CVXR package.
+#' To avoid a bad fit of the frontier at the left and/or right end of the sample (that may stem from computational issues in large data sets),
+#' we allow to add constraints for the frontier to go through the first and last FDH-points (''endpoints''), e.g., \eqn{\widehat{\varphi}(x_{min}) = \widehat{\varphi}_{FDH}(x_{min})}.
 #' @export
 #'
 #' @examples
-#' xtab=atp_2017$ranking_points
-#' ytab=atp_2017$wins
-#' xgrid=seq(min(xtab),max(xtab),length.out=101)
-#' fit_m <- SplineCubic(xtab=xtab, ytab=ytab, xgrid=xgrid,
-#'             kn=2, cv=0, iters=10000, eps=1e-6)
-#' fit_mc <- SplineCubic(xtab=xtab, ytab=ytab, xgrid=xgrid,
-#'             kn=2, cv=1, iters=100000, eps=1e-6)
-#' plot(xtab,ytab, xlab="ranking points", ylab="wins", main="ATP results in 2017 per player")
-#' lines(xgrid,fit_m,col="blue")
-#' lines(xgrid,fit_mc,col="green")
-#' legend("bottomright", col = c("green", "blue"),
-#'       legend = c("monontone+concave", "monotone"), lwd = 2)
-SplineCubic <- function(xtab, ytab, xgrid, kn, cv, iters=10000, eps=1e-6) {
-  x_min <- min(xtab)
-  x_max <- max(xtab)
-  y_min <- min(ytab)
-  y_max <- max(ytab)
+#' ytab = atp_2017$ranking_points
+#' xtab = atp_2017$wins
+#' xgrid = seq(min(xtab),max(xtab),length.out=101)
+#' fit_m <- SplineCubicAuto(xtab=xtab, ytab=ytab, xgrid=xgrid,
+#'                          cv=0, ic="BIC", kmax=3, iters=1000000, eps=1e-6,normalize=1,solver="CLARABEL")
+#' fit_mc <- SplineCubicAuto(xtab=xtab, ytab=ytab, xgrid=xgrid,
+#'                           cv=1, ic="BIC", kmax=3, iters=10000000000, eps=1e-2,normalize=0,solver="CLARABEL")
+#' plot(xtab,ytab, xlab="ranking points", ylab="wins", main="ATP results in 2017 per player",ylim=c(0,12000))
+#' lines(xgrid,fit_m$fit,col="red")
+#' lines(xgrid,fit_mc$fit,col="blue")
+#' legend("bottomright", col = c("blue", "red"),
+#'        legend = c("monontone+concave", "monotone"), lwd = 2)
+SplineCubic <- function(xtab, ytab, xgrid, kn, cv, endpoints=FALSE, normalize=FALSE,
+                        iters=1000000, eps=1e-6, return_knots=FALSE, verbose=FALSE, solver="SCS", scale_factor=1) {
 
-  # normalize between 0 and 1
-  xtab <- (xtab - x_min) / (x_max - x_min)
-  xgrid <- (xgrid - x_min) / (x_max - x_min)
-  ytab <- (ytab - y_min) / (y_max - y_min)
+  # enforce first and last FDH/DEA point as knots if not already in sample
+  if (endpoints==2) {
+    xtab <- c(xtab,min(xtab),max(xtab))
+    ytab <- c(ytab,min(ytab),max(ytab))
+  }
+
+  # using monotonic transformations for normalization
+  if (normalize==0) {
+    scale_x <- abs(max(xtab)) * scale_factor
+    scale_y <- abs(max(ytab)) * scale_factor
+
+    xtab <- xtab / scale_x
+    ytab <- ytab / scale_y
+    xgrid <- xgrid / scale_x
+  }
+  if (normalize==1) {
+    xtab <- xtab ** (1+scale_factor)
+    ytab <- ytab ** (1+scale_factor)
+    xgrid <- xgrid ** (1+scale_factor)
+  }
 
   l_end <- min(xtab)
   r_end <- max(xtab)
 
-  # Select FDH or DEA indices (used as knots)
+  # Select FDH or DEA indices
   if (cv > 0) {
     idx <- dea_index(xtab, ytab)
   } else {
@@ -246,7 +260,12 @@ SplineCubic <- function(xtab, ytab, xgrid, kn, cv, iters=10000, eps=1e-6) {
   }
 
   ## Interior knots
-  t_kn_i <- unname(quantile(xtab[idx], probs = (1:kn) / (kn + 1), type=7)) # type=5 makes it behave like Matlab
+  if (kn==0) {
+    t_kn_i = sort(xtab[idx])
+    kn <- length(idx)
+  } else {
+    t_kn_i <- unname(quantile(xtab[idx], probs = (1:kn) / (kn + 1), type=7))
+  }
   t_kn <- c(l_end, t_kn_i, r_end)
 
   ## Identity matrix for knots
@@ -334,6 +353,37 @@ SplineCubic <- function(xtab, ytab, xgrid, kn, cv, iters=10000, eps=1e-6) {
   ## Build constraints
   constraints <- list()
 
+  ## Endpoints constraints
+  if (endpoints==1) {
+    x_left <- min(xtab[idx])
+    y_left <- ytab[idx][which.min(xtab[idx])]
+
+    left_basis <- c(1, x_left, x_left^2, x_left^3, pmax(x_left - t_kn_i, 0)^3, rep(0, kn + 1))
+    constraints <- c(constraints,
+                     t(left_basis) %*% u == y_left)
+  }
+  if (endpoints==2) {
+    x_right <- max(xtab[idx])
+    y_right <- ytab[idx][which.max(xtab[idx])]
+
+    right_basis <- c(1, x_right, x_right^2, x_right^3, pmax(x_right - t_kn_i, 0)^3, rep(0, kn + 1))
+    constraints <- c(constraints,
+                     t(right_basis) %*% u == y_right)
+  }
+  if (endpoints==3) {
+    x_left <- min(xtab[idx])
+    x_right <- max(xtab[idx])
+    y_left <- ytab[idx][which.min(xtab[idx])]
+    y_right <- ytab[idx][which.max(xtab[idx])]
+
+    left_basis <- c(1, x_left, x_left^2, x_left^3, pmax(x_left - t_kn_i, 0)^3, rep(0, kn + 1))
+    right_basis <- c(1, x_right, x_right^2, x_right^3, pmax(x_right - t_kn_i, 0)^3, rep(0, kn + 1))
+
+    constraints <- c(constraints,
+                     t(left_basis) %*% u == y_left,
+                     t(right_basis) %*% u == y_right)
+  }
+
   if (cv >= 0) {
   for (j in 1:(kn + 1)) { # monotonicity constraint
     constraints <- c(constraints, CVXR::norm(A_j_array[, , j] %*% u, "2") <= t(c_j_array[j, ]) %*% u)
@@ -352,15 +402,19 @@ SplineCubic <- function(xtab, ytab, xgrid, kn, cv, iters=10000, eps=1e-6) {
   ## Solve optimization
   objective <- CVXR::Minimize(t(coef) %*% u)
   problem <- CVXR::Problem(objective, constraints)
-  result <- CVXR::solve(problem, solver = "SCS", eps = eps, max_iters = iters)
+  if (solver=="SCS") {
+    result <- CVXR::solve(problem, solver = "SCS", eps_abs = eps, max_iters = iters, verbose = verbose)
+  } else {
+    result <- CVXR::solve(problem, solver = solver, verbose = verbose)
+  }
 
   if (result$status != "optimal") {
-    print(paste("DCP problem not optimally solved with k =",k," and iters =",iters,", maybe increase iterations or decrease k"))
-  }
-  else {
+    print(paste("DCP problem not optimally solved with k =",k," and iters =",iters,", maybe increase iterations/eps or decrease k"))
+    break
+  } else {
   u_opt <- result$getValue(u)
 
-  alpha <- u_opt[1:(kn + 3 + 1)]
+  alpha <- u_opt[1:(kn + 3 + 1)] # should be kn + 3 + 1 + 2
 
   ## Evaluate fitted spline
   r <- length(xgrid)
@@ -372,10 +426,23 @@ SplineCubic <- function(xtab, ytab, xgrid, kn, cv, iters=10000, eps=1e-6) {
   }
 
   fitt <- plot_array %*% alpha
-  fitt <- fitt * (y_max - y_min) + y_min
+  knots <- t_kn_i
 
+  if (normalize==0) {
+    fitt <- fitt * scale_y
+    knots <- t_kn_i * scale_x }
+  if (normalize==1) {
+    fitt <- fitt ** (1/(1+scale_factor))
+    knots <- t_kn_i ** (1/(1+scale_factor))
+  }
+
+  if (return_knots) {
+    return(list(frontier = fitt, knots = knots))
+  } else {
   return(fitt)
   }
+  }
+
 }
 
 
@@ -387,10 +454,13 @@ SplineCubic <- function(xtab, ytab, xgrid, kn, cv, iters=10000, eps=1e-6) {
 #' @param ytab numeric vector of y-indices of data points
 #' @param xgrid numeric vector of x-values where function should be evaluated
 #' @param cv integer. indicates constraints for fitting: -1 (unconstrained), 0 (monotonically increasing), 1 (monotonically increasing + concave)
+#' @param endpoints boolean. TRUE forces frontier to go through first and last DEA/FDH point
 #' @param ic string. information criterion: either "AIC" or "BIC"
 #' @param kmax integer. highest number of knots considered by information criterion
 #' @param iters integer. iterations used for optimization for the CVXR solver
 #' @param eps integer. stopping criterion (absolute some of deviations from constraints)
+#' @param normalize integer 1 divides by absolute maximum to normalize xtab and ytab, 2 takes the square root; default is no normalization
+#' @param return_knots boolean. TRUE makes the output a list of the fitted frontier and the chosen knots
 #' @return A list with:
 #' \describe{
 #'   \item{\code{fit}}{Numeric vector of fitted y-values at the grid points.}
@@ -398,8 +468,8 @@ SplineCubic <- function(xtab, ytab, xgrid, kn, cv, iters=10000, eps=1e-6) {
 #' }
 #' @details This function fits cubic splines with different numbers of knots (from 1 to the kmax chosen)
 #' and then selects the one with the lowest AIC or BIC value. The information criteria are calculated as
-#' \deqn{AIC = \log(\sum|y-i-\hat{phi}(x_i)|) + 2 \cdot (k+4) / n} and
-#' \deqn{BIC = \log(\sum|y-i-\hat{phi}(x_i)|) + \log(n) \cdot (k+4) / n}
+#' \deqn{AIC = \log(\sum|y_i-\hat{\phi}(x_i)|) + 2 \cdot (k+4) / n} and
+#' \deqn{BIC = \log(\sum|y_i-\hat{\phi}(x_i)|) + \log(n) \cdot (k+4) / n}
 #' @export
 #'
 #' @examples
@@ -415,43 +485,68 @@ SplineCubic <- function(xtab, ytab, xgrid, kn, cv, iters=10000, eps=1e-6) {
 #' lines(xgrid,fit_mc$fit,col="blue")
 #' legend("bottomright", col = c("blue", "red"),
 #'         legend = c("monontone+concave", "monotone"), lwd = 2)
-SplineCubicAuto <- function(xtab, ytab, xgrid, cv, ic="BIC", kmax=5, iters=10000, eps=1e-6) {
+SplineCubicAuto <- function(xtab, ytab, xgrid, cv, endpoints=FALSE, normalize = TRUE,
+                            ic="BIC", kmax=0, all_dea=TRUE,
+                            iters=1000000, eps=1e-6, return_knots=FALSE, verbose=FALSE, solver="SCS", scale_factor=1) {
+
+  # without input, choose maximum number of knots possible (all dea/fdh points)
+  if (kmax==0) {
+    if (cv > 0) {
+      kmax <- min(10,length(dea_index(xtab, ytab)))
+    } else {
+      kmax <- min(10,length(fdh_index(xtab, ytab)))
+    }
+  }
 
   if (ic == "AIC") {
     AIC <- numeric()  # Initialize an empty vector for AIC values
 
-    # Loop over k from 1 to 10
-    for (k in 1:kmax) {
-      # Calculate AIC for current k
-      fit <- SplineCubic(xtab, ytab, xtab, k, cv, iters, eps)  # Call SplineCubic function
-      residuals <- abs(ytab - fit)  # Calculate residuals
-      AIC[k] <- log(sum(residuals)) + 2 * (k + 4) / length(xtab)  # Store AIC value
+    for (k in ifelse(all_dea,0,1):kmax) {
+      fit <- tryCatch(
+        SplineCubic(xtab, ytab, xtab, k, cv, endpoints, normalize, iters, eps, FALSE, verbose, solver, scale_factor),
+        error = function(e) NULL  # On error, return NULL
+      )
+
+      if (is.numeric(fit) && length(fit) == length(ytab)) {
+        residuals <- abs(ytab - fit)
+        AIC[k] <- log(sum(residuals)) + (k + 3) / length(xtab)
+      } else {
+        AIC[k] <- NA  # Assign NA if fit is invalid
+        warning(paste("SplineCubic failed at k =", k))
+      }
     }
 
     # Find the k value that minimizes AIC
-    k <- which.min(AIC)  # Find the index of the minimum AIC
-    fit <- SplineCubic(xtab, ytab, xgrid, k, cv, iters, eps)  # Call SplineCubic with optimal k
-
-    # Return the fitted values and optimal k
-    return(list(fit = fit, k = k))
+    k <- which.min(AIC)-ifelse(all_dea,1,0)  # Find the index of the minimum AIC
+    if (return_knots) {
+      fit <- SplineCubic(xtab, ytab, xgrid, k, cv, endpoints, normalize, iters, eps, return_knots, verbose, solver)  # Call SplineCubic with optimal k
+      return(list(fit = fit$frontier, k = k, knots = fit$knots))
+    } else {
+      fit <- SplineCubic(xtab, ytab, xgrid, k, cv, endpoints, normalize, iters, eps, return_knots, verbose, solver)  # Call SplineCubic with optimal k
+      return(list(fit = fit, k = k))
+    }
   }
+
   if (ic == "BIC") {
     BIC <- numeric()  # Initialize an empty vector for BIC values
 
-    # Loop over k from 1 to 10
-    for (k in 1:kmax) {
+    # Loop over k from 1 to kmax
+    for (k in ifelse(all_dea,0,1):kmax) {
       # Calculate BIC for current k
-      fit <- SplineCubic(xtab, ytab, xtab, k, cv, iters, eps)  # Call SplineCubic function
+      fit <- SplineCubic(xtab, ytab, xtab, k, cv, endpoints, normalize, iters, eps, FALSE, verbose, solver)  # Call SplineCubic function
       residuals <- abs(ytab - fit)  # Calculate residuals
-      BIC[k] <- log(sum(residuals)) + log(length(xtab)) * (k + 4) / (length(xtab))  # Store BIC value
+      BIC[k] <- log(sum(residuals)) + log(length(xtab)) * (k + 3) / (2*length(xtab))  # Store BIC value
     }
 
     # Find the k value that minimizes BIC
-    k <- which.min(BIC)  # Find the index of the minimum BIC
-    fit <- SplineCubic(xtab, ytab, xgrid, k, cv, iters, eps)  # Call SplineCubic with optimal k
-
-    # Return the fitted values and optimal k
-    return(list(fit = fit, k = k))
+    k <- which.min(BIC)-ifelse(all_dea,1,0)  # Find the index of the minimum BIC
+    if (return_knots) {
+      fit <- SplineCubic(xtab, ytab, xgrid, k, cv, endpoints, normalize, iters, eps, return_knots, verbose, solver)  # Call SplineCubic with optimal k
+      return(list(fit = fit$frontier, k = k, knots = fit$knots))
+    } else {
+      fit <- SplineCubic(xtab, ytab, xgrid, k, cv, endpoints, normalize, iters, eps, return_knots, verbose, solver)  # Call SplineCubic with optimal k
+      return(list(fit = fit, k = k))
+    }
   }
 }
 
@@ -464,6 +559,7 @@ SplineCubicAuto <- function(xtab, ytab, xgrid, cv, ic="BIC", kmax=5, iters=10000
 #' @param ytab numeric vector of y-indices of data points
 #' @param xgrid numeric vector of x-values where function should be evaluated
 #' @param cv integer. indicates constraints for fitting: -1 (unconstrained), 0 (monotonically increasing), 1 (monotonically increasing + concave)
+#' @param endpoints boolean. TRUE forces frontier to go through first and last DEA/FDH point
 #' @param ic string. information criterion: either "AIC" or "BIC"
 #' @param kmax integer. highest number of knots considered by information criterion
 #' @param iters integer. iterations used for optimization for the CVXR solver
@@ -487,20 +583,29 @@ SplineCubicAuto <- function(xtab, ytab, xgrid, cv, ic="BIC", kmax=5, iters=10000
 #'                              kmax=5, cv=0, iters=100000, eps=1e-6)
 #' plot(xtab,ytab, xlab="year", ylab="log(budget)", main="Runtime of big franchise movies")
 #' lines(xgrid,fit_m$fit,col="red")
-SplineCubicAutoLower <- function(xtab, ytab, xgrid, cv, ic="BIC", iters=10000, kmax=5, eps = 1e-6) {
+SplineCubicAutoLower <- function(xtab, ytab, xgrid, cv, endpoints=FALSE, ic="BIC", iters=10000, kmax=0, eps = 1e-6) {
+
+  # without input, choose maximum number of knots possible (all dea/fdh points)
+  if (kmax==0) {
+    if (cv > 0) {
+      kmax <- length(dea_lower_index(xtab, ytab))
+    } else {
+      kmax <- length(fdh_lower_index(xtab, ytab))
+    }
+  }
 
   if (ic=="AIC") {
     AIC <- numeric()
 
     for (k in 1:kmax) {
-      fit <- SplineCubicLower(xtab, ytab, xtab, k, cv, iters)
+      fit <- SplineCubicLower(xtab, ytab, xtab, k, cv, endpoints, iters, eps)
       resid <- ytab - fit
       AIC_k <- log(sum(abs(resid))) + 2 * (k + 4) / length(xtab)
       AIC <- c(AIC, AIC_k)
     }
 
     k <- which.min(AIC)
-    fit <- SplineCubicLower(xtab, ytab, xgrid, k, cv, iters, eps)
+    fit <- SplineCubicLower(xtab, ytab, xgrid, k, cv, endpoints, iters, eps)
 
     return(list(fit = fit, k = k))
   }
@@ -509,14 +614,14 @@ SplineCubicAutoLower <- function(xtab, ytab, xgrid, cv, ic="BIC", iters=10000, k
     BIC <- numeric()  # Initialize an empty vector for BIC values
 
     for (k in 1:kmax) {
-      fit <- SplineCubicLower(xtab, ytab, xtab, k, cv, iters, eps)
+      fit <- SplineCubicLower(xtab, ytab, xtab, k, cv, endpoints, iters, eps)
       resid <- ytab - fit
       BIC_k <- log(sum(abs(resid))) + log(length(xtab)) * (k + 4) / (2*length(xtab))
       BIC <- c(BIC, BIC_k)
     }
 
     k <- which.min(BIC)
-    fit <- SplineCubicLower(xtab, ytab, xgrid, k, cv, iters, eps)
+    fit <- SplineCubicLower(xtab, ytab, xgrid, k, cv, endpoints, iters, eps)
 
     return(list(fit = fit, k = k))
   }
@@ -534,6 +639,7 @@ SplineCubicAutoLower <- function(xtab, ytab, xgrid, cv, ic="BIC", iters=10000, k
 #' @param xgrid numeric vector of x-values where function should be evaluated
 #' @param kn integer. number of knots for spline fitting
 #' @param cv integer. indicates constraints for fitting: -1 (unconstrained), 0 (monotonically increasing), 1 (monotonically increasing + concave)
+#' @param endpoints boolean. TRUE forces frontier to go through first and last DEA/FDH point
 #' @param iters integer. iterations used for optimization for the CVXR solver
 #' @param eps integer. stopping criterion (absolute some of deviations from constraints)
 #' @return numeric vector with y-values of fitted cubic spline at grid points
@@ -560,7 +666,7 @@ SplineCubicAutoLower <- function(xtab, ytab, xgrid, cv, ic="BIC", iters=10000, k
 #' lines(xgrid,fit_mc,col="green")
 #' legend("topright", col = c("green", "blue"),
 #'       legend = c("monontone+concave", "monotone"), lwd = 2)
-SplineCubicLower <- function(xtab, ytab, xgrid, kn, cv, iters = 10000, eps = 1e-6) {
+SplineCubicLower <- function(xtab, ytab, xgrid, kn, cv, endpoints=FALSE, iters = 10000, eps = 1e-6) {
   x_min <- min(xtab)
   x_max <- max(xtab)
   y_min <- min(ytab)
@@ -670,6 +776,21 @@ SplineCubicLower <- function(xtab, ytab, xgrid, kn, cv, iters = 10000, eps = 1e-
   }
   if (cv == 1) {
     constraints <- c(constraints, con_array %*% u >= 0)
+  }
+
+  ## endpoints constraints
+  if (endpoints==TRUE) {
+    x_left <- min(xtab[idx])
+    x_right <- max(xtab[idx])
+    y_left <- ytab[idx][which.min(xtab[idx])]
+    y_right <- ytab[idx][which.max(xtab[idx])]
+
+    left_basis <- c(1, x_left, x_left^2, x_left^3, pmax(x_left - t_kn_i, 0)^3, rep(0, kn + 1))
+    right_basis <- c(1, x_right, x_right^2, x_right^3, pmax(x_right - t_kn_i, 0)^3, rep(0, kn + 1))
+
+    constraints <- c(constraints,
+                     t(left_basis) %*% u == y_left,
+                     t(right_basis) %*% u == y_right)
   }
 
   constraints <- c(
